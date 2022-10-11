@@ -31,7 +31,46 @@ class AuthError(Exception):
     return the token part of the header
 '''
 def get_token_auth_header():
-   raise Exception('Not Implemented')
+    # TO GET THE HEADER FROM THE REQUEST BODY
+    if "Authorization" not in request.headers:
+        raise AuthError({
+            "code": "authorization_header_missing",
+            "description": "AUTHORIZATION HEADER NOT FOUND"
+        }, 401)
+    # TO SPLIT THE BEARER AND THE TOKEN INTO SEPERATE FACTIONS
+    authorization_header = request.headers.get("Authorization", None)
+    header_components = authorization_header.split()
+
+    if len(header_components) != 2:
+        raise AuthError(
+            {
+                "code": "invalid_header",
+                "description": "HEADER IN INCORRECT FORMAT"
+            }, 401)
+    # TO CHECK IF THE AUTHORIZATION HEADER IS COMPLETE OR NOT
+    elif len(header_components) == 1:
+        raise AuthError(
+            {
+                "code": "invalid_header",
+                "description": "MISSING TOKEN"
+            }, 401)
+    # TO CHECK IF THE HEADER IS MALFORMED OR NOT
+    elif header_components[0].lower() != "bearer":
+        raise AuthError(
+            {
+                "code": "invalid_header",
+                "description": "THE BEARER ISN'T STARTING THE GIVEN AUTHORIZATION HEADER"
+            }, 401)
+    # TO CHECK IF THE AUTHORIZATION HEADER IS OVER-COMPLETE
+    elif len(header_components) > 2:
+        raise AuthError(
+            {
+                "code": "invalid_header",
+                "drescription": "AUTH. HEADER ISN'T A BEARER TOKEN"
+            }, 401)
+    # RETURNING THE TOKEN PART OF THE HEADER
+    expected_token == header_components[1]
+    return expected_token
 
 '''
 @TODO implement check_permissions(permission, payload) method
@@ -45,7 +84,22 @@ def get_token_auth_header():
     return true otherwise
 '''
 def check_permissions(permission, payload):
-    raise Exception('Not Implemented')
+    # TO CHECK IF PERMISSIONS ARE INCLUDED IN THE PAYLOAD
+    if "permission" not in payload:
+        raise AuthError(
+            {
+                "code": "not_valid",
+                "description": "YOUR JWT DOES NOT INCLUDE THIS PERMISSION"
+            }, 400)
+    # TO CHECK IF THE REQQQUESTED PERMISION IS IN THE PAYLOAD
+    if permission not in payload["permissions"]:
+        raise AuthError(
+            {
+            "code": "not_authorized",
+            "description": "REQUSTED PERMMISSION STRING NOT IN PAYLOAD"
+        }, 403)
+    # RETURNING TRUE AS REQUIRED
+    raise True
 
 '''
 @TODO implement verify_decode_jwt(token) method
@@ -61,7 +115,61 @@ def check_permissions(permission, payload):
     !!NOTE urlopen has a common certificate error described here: https://stackoverflow.com/questions/50236117/scraping-ssl-certificate-verify-failed-error-for-http-en-wikipedia-org
 '''
 def verify_decode_jwt(token):
-    raise Exception('Not Implemented')
+    jsonurl = urlopen(f'https://{AUTH0_DOMAIN}/.well-known/jwks.json')
+    jwks = json.loads(jsonurl.read())
+    unverified_header = jwt.get_unverified_header(token)
+    rsa_key = {}
+    # TO CHECK IF IT IS AN AUTH0 TOKEN i.e IF IT CONTINS KID OR NOT
+    if 'kid' not in unverified_header:
+        raise AuthError({
+            'code': 'invalid_header',
+            'description': 'AUTHORIZATION HEADER NOT IN CORRECT FORMAT'
+        }, 401)
+
+    for key in jwks['keys']:
+        if key['kid'] == unverified_header['kid']:
+            rsa_key = {
+                'kty': key['kty'],
+                'kid': key['kid'],
+                'use': key['use'],
+                'n': key['n'],
+                'e': key['e']
+            }
+    if rsa_key:
+        try:
+            payload = jwt.decode(
+                token,
+                rsa_key,
+                algorithms=ALGORITHMS,
+                audience=API_AUDIENCE,
+                issuer='https://' + AUTH0_DOMAIN + '/'
+            )
+            # RETURNING THE DEODED PAYLOAD
+            return payload
+        # VALIDATING CLAIMS
+        except jwt.ExpiredSignatureError:
+            raise AuthError({
+                'code': 'token_expired',
+                'description': 'THE TOKEN HAS EXPIRED'
+            }, 401)
+
+        except jwt.JWTClaimsError:
+            raise AuthError({
+                'code': 'invalid_claims',
+                'description': 'INAPPROPRIATE'
+            }, 401)
+        except Exception:
+            raise AuthError({
+                'code': 'invalid_header',
+                'description': 'AUTHENTICATION TOKEN CANNOT BE PARSED'
+            }, 400)
+    raise AuthError({
+                'code': 'invalid_header',
+                'description': 'CANNOT FIND THE APPROPRIATEEE KEY'
+            }, 400)
+
+
+
 
 '''
 @TODO implement @requires_auth(permission) decorator method
@@ -78,8 +186,16 @@ def requires_auth(permission=''):
         @wraps(f)
         def wrapper(*args, **kwargs):
             token = get_token_auth_header()
-            payload = verify_decode_jwt(token)
-            check_permissions(permission, payload)
+            try:
+                # DECODING THE JWT
+                payload = verify_decode_jwt(token)
+            except:
+                abort(401)
+            try:
+                # TO CHECK THE REQUESTD PERMISSION
+                check_permissions(permission, payload)
+            except:
+                abort(403)
             return f(payload, *args, **kwargs)
 
         return wrapper
